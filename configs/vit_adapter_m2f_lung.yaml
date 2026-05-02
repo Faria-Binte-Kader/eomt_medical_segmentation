@@ -1,0 +1,31 @@
+# ViT-Adapter + Mask2Former (DINOv2-Base backbone) config for MSD Lung (Task06)
+#
+# Matches the DINOv2-based ViT-Adapter + Mask2Former baseline from the EoMT paper.
+# Deformable attention is replaced by standard cross-attention (negligible
+# impact per Table 1 ablation: adapter contributes ~0.4 PQ with DINOv2).
+
+# ── Data ───────────────────────────────────────────────────────────────────
+data_dir: "./data/lung"
+img_size: 512
+batch_size: 2
+num_workers: 4
+
+# ── Training ───────────────────────────────────────────────────────────────
+max_epochs: 50
+lr: 1.0e-4
+backbone_lr: 1.0e-5
+weight_decay: 0.05
+warmup_steps: 500
+val_check_interval: 1.0
+devices: 1
+precision: "16-mixed"
+
+# ── Architecture ────────────────────────────────────────────────────────────
+backbone_name: "vit_base_patch14_reg4_dinov2.lvd142m"
+num_queries: 100
+num_decoder_layers: 9
+adapter_interval: 6     # inject/extract after blocks 5, 11 for 12-block ViT-B
+
+# ── Logging ────────────────────────────────────────────────────────────────
+output_dir: "./checkpoints"
+run_name: "vit_adapter_m2f_lung_b512"
