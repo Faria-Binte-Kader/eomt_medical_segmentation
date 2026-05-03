@@ -36,7 +36,7 @@ class LayerNorm2d(nn.Module):
         self.norm = nn.LayerNorm(channels)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.norm(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+        return self.norm(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2).contiguous()
 
 
 # ── Spatial Prior Module (CNN stem) ─────────────────────────────────────────
