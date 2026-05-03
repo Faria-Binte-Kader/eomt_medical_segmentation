@@ -7,6 +7,7 @@ Uses the same MaskClassificationLoss as EoMT for a fair training comparison.
 import math
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import lightning as L
 
@@ -97,6 +98,11 @@ class ViTAdapterM2FModule(L.LightningModule):
         loss = self.criterion.loss_total(all_losses, self.log)
         if not torch.isfinite(loss):
             print(f"[WARNING] Non-finite loss at step {self.global_step} — skipping batch")
+            # The forward pass already updated BatchNorm running stats with NaN inputs.
+            # Reset them now so the next batch normalises from a clean state.
+            for m in self.modules():
+                if isinstance(m, nn.BatchNorm2d):
+                    m.reset_running_stats()
         return torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
 
     # ── validation ───────────────────────────────────────────────────────────
