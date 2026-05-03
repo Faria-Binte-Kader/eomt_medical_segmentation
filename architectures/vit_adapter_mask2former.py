@@ -326,7 +326,7 @@ class ViTAdapterMask2Former(nn.Module):
         # Use the ViT wrapper only to build + get pixel stats, then store the
         # inner timm model directly so attribute access matches EoMT's pattern
         # (self.backbone.embed_dim / .blocks / .patch_embed / .norm / etc.)
-        _vit_wrapper = ViT(backbone_name, img_size=img_size)
+        _vit_wrapper = ViT(img_size=img_size, backbone_name=backbone_name)
         self.backbone = _vit_wrapper.backbone          # timm model
         self.register_buffer("pixel_mean", _vit_wrapper.pixel_mean.clone().detach())
         self.register_buffer("pixel_std",  _vit_wrapper.pixel_std.clone().detach())
