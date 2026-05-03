@@ -172,6 +172,12 @@ def main():
     if args.compile:
         module = torch.compile(module)
 
+    # Make all parameters contiguous so DDP bucket views don't need a copy.
+    if args.devices > 1:
+        for p in module.parameters():
+            if not p.data.is_contiguous():
+                p.data = p.data.contiguous()
+
     # ── Logger ───────────────────────────────────────────────────────────
     run_name = args.run_name or f"{args.model}_lung"
     if args.wandb:
