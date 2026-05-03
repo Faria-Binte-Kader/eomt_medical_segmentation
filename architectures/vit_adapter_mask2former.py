@@ -54,21 +54,21 @@ class SpatialPriorModule(nn.Module):
 
         self.stem = nn.Sequential(
             nn.Conv2d(in_channels, inner, 7, stride=4, padding=3, bias=False),
-            nn.BatchNorm2d(inner), nn.GELU(),
+            nn.GroupNorm(32, inner), nn.GELU(),
             nn.Conv2d(inner, inner, 3, padding=1, bias=False),
-            nn.BatchNorm2d(inner), nn.GELU(),
+            nn.GroupNorm(32, inner), nn.GELU(),
         )
         self.down1 = nn.Sequential(
             nn.Conv2d(inner, inner, 3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(inner), nn.GELU(),
+            nn.GroupNorm(32, inner), nn.GELU(),
         )
         self.down2 = nn.Sequential(
             nn.Conv2d(inner, inner, 3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(inner), nn.GELU(),
+            nn.GroupNorm(32, inner), nn.GELU(),
         )
         self.down3 = nn.Sequential(
             nn.Conv2d(inner, inner, 3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(inner), nn.GELU(),
+            nn.GroupNorm(32, inner), nn.GELU(),
         )
 
         self.proj4  = nn.Sequential(nn.Conv2d(inner, embed_dim, 1), LayerNorm2d(embed_dim))
