@@ -243,13 +243,15 @@ class Mask2FormerTransformerDecoder(nn.Module):
         B, Q, H, W = mask_logits.shape
         # True = block this position (sigmoid < 0.5 means mask not predicted here)
         mask = (mask_logits.detach().sigmoid() < 0.5).view(B, Q, H * W)
-        # if every position is blocked for a query, unblock all (avoids NaN gradient)
-        mask = mask & ~mask.all(dim=-1, keepdim=True)
         if H * W != kv_len:
             kv_h = int(math.isqrt(kv_len))
             mask = F.interpolate(
                 mask.float().view(B, Q, H, W), size=(kv_h, kv_h), mode="nearest"
             ).bool().view(B, Q, kv_len)
+        # Fallback applied at KV resolution, not prediction resolution.
+        # Nearest-neighbour downsampling can map all False positions to non-sampled
+        # pixels, leaving every KV slot as True and making softmax(all -inf) = NaN.
+        mask = mask & ~mask.all(dim=-1, keepdim=True)
         # [B*heads, Q, kv_len]
         return mask.unsqueeze(1).expand(-1, num_heads, -1, -1).reshape(B * num_heads, Q, kv_len)
 
