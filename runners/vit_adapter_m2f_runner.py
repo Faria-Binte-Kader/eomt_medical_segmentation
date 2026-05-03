@@ -14,6 +14,7 @@ import lightning as L
 from architectures.vit_adapter_mask2former import ViTAdapterMask2Former
 from training.mask_classification_loss import MaskClassificationLoss
 from runners.dice_metric import IGNORE_IDX
+from runners.optim_utils import build_backbone_llrd_groups
 
 NUM_CLASSES = 1   # cancer only
 
@@ -35,6 +36,7 @@ class ViTAdapterM2FModule(L.LightningModule):
         adapter_interval: int = 6,
         lr: float = 1e-4,
         backbone_lr: float = 1e-5,
+        llrd_decay: float = 0.8,
         weight_decay: float = 0.05,
         warmup_steps: int = 500,
         max_steps: int = 10_000,
@@ -173,21 +175,19 @@ class ViTAdapterM2FModule(L.LightningModule):
     # ── optimiser ────────────────────────────────────────────────────────────
 
     def configure_optimizers(self):
-        backbone_params, head_params = [], []
-        bb_ids = {id(p) for p in self.network.backbone.parameters()}
-
-        for p in self.parameters():
-            if not p.requires_grad:
-                continue
-            if id(p) in bb_ids:
-                backbone_params.append(p)
-            else:
-                head_params.append(p)
-
-        optimizer = torch.optim.AdamW([
-            {"params": backbone_params, "lr": self.hparams.backbone_lr},
-            {"params": head_params,     "lr": self.hparams.lr},
-        ], weight_decay=self.hparams.weight_decay)
+        backbone_groups, bb_ids = build_backbone_llrd_groups(
+            self.network.backbone,
+            self.hparams.backbone_lr,
+            self.hparams.llrd_decay,
+        )
+        head_params = [
+            p for p in self.parameters()
+            if p.requires_grad and id(p) not in bb_ids
+        ]
+        optimizer = torch.optim.AdamW(
+            backbone_groups + [{"params": head_params, "lr": self.hparams.lr}],
+            weight_decay=self.hparams.weight_decay,
+        )
 
         warmup = self.hparams.warmup_steps
         total  = self.hparams.max_steps

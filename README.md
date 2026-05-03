@@ -1,14 +1,16 @@
-# Medical Segmentation: EoMT vs ViT-Adapter+Mask2Former on MSD Lung
+# EoMT vs ViT-Adapter+Mask2Former on MSD Lung
 
-Benchmarks three segmentation architectures on the **Medical Segmentation Decathlon (MSD) Lung** dataset (Task06), reporting global DICE and IoU for lung cancer segmentation.
+**Research question:** Does EoMT's encoder-only design generalize to a medical imaging domain, or does the heavier two-component pipeline of ViT-Adapter+Mask2Former hold an advantage when the input distribution shifts from natural images to CT scans?
+
+Both models are implemented paper-faithfully and trained under identical conditions. The only divergences from the original paper are forced by the dataset (binary classes, CT input, limited training size). See [METHODOLOGY.md](METHODOLOGY.md) for full details.
 
 | Model | Backbone | Params (backbone) | Paper variant |
 |---|---|---|---|
-| **EoMT** | DINOv2 ViT-B/14 reg4 | ~86 M | ViT-B (this repo) / ViT-L (paper Table 1) |
-| **ViT-Adapter + Mask2Former** | DINOv2 ViT-B/14 reg4 | ~86 M | ViT-B (this repo) / ViT-L (paper Table 1) |
-| **Mask2Former** | Swin-Base (ADE20k pretrained) | ~88 M | Swin-B baseline (matches paper) |
+| **EoMT** | DINOv2 ViT-B/14 reg4 | ~86 M | ViT-B (this repo) / ViT-L (paper) |
+| **ViT-Adapter + Mask2Former** | DINOv2 ViT-B/14 reg4 | ~86 M | ViT-B (this repo) / ViT-L (paper) |
+| **Mask2Former** | Swin-Base (ADE20k pretrained) | ~88 M | Reference baseline (non-DINOv2) |
 
-> The EoMT paper (CVPR 2025) reports main results with ViT-Large (~307 M). To reproduce those, change `backbone_name` to `vit_large_patch14_reg4_dinov2.lvd142m` in the relevant config. See [Model Size Variants](#model-size-variants).
+> The EoMT paper (CVPR 2025) reports main results with ViT-Large (~307 M). To reproduce at paper scale, set `backbone_name` to `vit_large_patch14_reg4_dinov2.lvd142m` in the relevant config. See [Model Size Variants](#model-size-variants).
 
 ---
 
@@ -23,22 +25,24 @@ medical-seg/
 ├── data/
 │   └── msd_lung.py             # PyTorch Dataset + collate_fn
 │
-├── models/                     # EoMT architecture (standalone copy)
+├── models/                     # EoMT architecture (from eomt-master)
 │   ├── vit.py                  # ViT wrapper (timm / HuggingFace)
 │   ├── eomt.py                 # EoMT encoder with masked attention
 │   └── scale_block.py          # Transposed-conv upscale block
 │
 ├── training/
-│   └── mask_classification_loss.py   # Hungarian-matched BCE+Dice+CE loss
+│   ├── mask_classification_loss.py          # Hungarian-matched BCE+Dice+CE loss
+│   └── two_stage_warmup_poly_schedule.py   # Paper LR schedule (from eomt-master)
 │
 ├── architectures/
 │   └── vit_adapter_mask2former.py    # ViT-Adapter + Mask2Former (standalone)
 │
 ├── runners/
-│   ├── eomt_runner.py          # Lightning module: EoMT
+│   ├── eomt_runner.py                # Lightning module: EoMT
 │   ├── vit_adapter_m2f_runner.py     # Lightning module: ViT-Adapter+M2F
-│   ├── mask2former_runner.py   # Lightning module: Mask2Former (HF)
-│   └── dice_metric.py          # DICE and IoU helpers
+│   ├── mask2former_runner.py         # Lightning module: Mask2Former (HF)
+│   ├── optim_utils.py                # LLRD parameter group builder
+│   └── dice_metric.py                # DICE and IoU helpers
 │
 └── configs/
     ├── eomt_lung.yaml
@@ -80,7 +84,7 @@ data/lung/
     val/  ...
 ```
 
-**Label convention (0-indexed):**
+**Label convention:**
 
 | Value | Class |
 |---|---|
@@ -91,7 +95,7 @@ data/lung/
 
 ## Training
 
-All models share the same hyperparameter interface. Config files are in `configs/`.
+Both primary models share the same hyperparameter interface and training schedule. Config files are in `configs/`.
 
 ### EoMT (DINOv2 ViT-Base)
 ```bash
@@ -113,7 +117,7 @@ python train.py \
     --output_dir ./checkpoints
 ```
 
-### Mask2Former (Swin-Base)
+### Mask2Former (Swin-Base, reference baseline)
 ```bash
 python train.py \
     --model mask2former \
@@ -130,8 +134,8 @@ All models save the top-3 checkpoints by `val/dice_mean` plus `last.ckpt`. Train
 Pass `--devices N` to use N GPUs with DDP. The per-GPU batch size stays fixed; effective batch size scales linearly.
 
 ```bash
-# 2-GPU example — effective batch size = 2 × 2 = 4
-python train.py \
+# 2-GPU example (e.g. CUDA_VISIBLE_DEVICES=0,2)
+CUDA_VISIBLE_DEVICES=0,2 python train.py \
     --model eomt \
     --data_dir ./data/lung \
     --backbone_name vit_base_patch14_reg4_dinov2.lvd142m \
@@ -145,7 +149,7 @@ python train.py \
 | 2 | 2 | 4 | ~0.55× |
 | 4 | 2 | 8 | ~0.30× |
 
-> The LR schedule automatically adjusts `max_steps` to the per-GPU step count, so warmup and cosine decay remain correct regardless of the number of GPUs.
+The LR schedule's `max_steps` is computed as per-GPU step count (`len(train_dl) × epochs // devices`), keeping warmup and polynomial decay proportionally correct at any device count.
 
 ---
 
@@ -154,9 +158,9 @@ python train.py \
 ```bash
 python evaluate.py \
     --data_dir ./data/lung \
-    --eomt_ckpt       ./checkpoints/eomt/ckpts/last.ckpt \
+    --eomt_ckpt        ./checkpoints/eomt/ckpts/last.ckpt \
     --vit_adapter_ckpt ./checkpoints/vit_adapter_m2f/ckpts/last.ckpt \
-    --m2f_ckpt        ./checkpoints/mask2former/ckpts/last.ckpt \
+    --m2f_ckpt         ./checkpoints/mask2former/ckpts/last.ckpt \
     --img_size 512
 ```
 
@@ -164,12 +168,12 @@ Prints a side-by-side table and writes `eval_results.json`:
 
 ```
                           EoMT  ViT-Adapter+M2F  Mask2Former
-──────────────────────────────────────────────────────────
+──────────────────────────────────────────────────────────────
 dice_cancer             0.XXXX           0.XXXX       0.XXXX
 iou_cancer              0.XXXX           0.XXXX       0.XXXX
 dice_mean               0.XXXX           0.XXXX       0.XXXX
 miou                    0.XXXX           0.XXXX       0.XXXX
-──────────────────────────────────────────────────────────
+──────────────────────────────────────────────────────────────
 ```
 
 ---
@@ -196,8 +200,10 @@ For Mask2Former, the Swin backbone size can be changed via `--m2f_model`:
 ## Methodology and Evaluation
 
 See [METHODOLOGY.md](METHODOLOGY.md) for detailed descriptions of:
+- Research goal and experimental design
 - Dataset preprocessing and CT windowing
 - Multi-slice pseudo-RGB construction
-- Model architectures
-- Training loss and optimisation
-- Global DICE score computation
+- Model architectures (paper-faithful)
+- Training hyperparameters and schedule
+- Global DICE and IoU evaluation
+- Differences from the paper setup

@@ -50,8 +50,17 @@ def parse_args():
     p.add_argument("--max_epochs",   type=int, default=50)
     p.add_argument("--lr",           type=float, default=1e-4)
     p.add_argument("--backbone_lr",  type=float, default=1e-5)
-    p.add_argument("--weight_decay", type=float, default=0.05)
-    p.add_argument("--warmup_steps", type=int,   default=500)
+    p.add_argument("--llrd_decay",   type=float, default=0.8,
+                   help="Layer-wise LR decay per ViT block (paper=0.8; 1.0=disabled)")
+    p.add_argument("--weight_decay",       type=float, default=0.05)
+    p.add_argument("--warmup_steps",       type=int,   default=500,
+                   help="Head warmup steps (backbone frozen during this phase)")
+    p.add_argument("--vit_warmup_steps",   type=int,   default=500,
+                   help="Backbone warmup steps after head warmup (EoMT)")
+    p.add_argument("--poly_power",         type=float, default=0.9,
+                   help="Polynomial decay power for LR schedule (paper=0.9)")
+    p.add_argument("--no_mask_annealing",  action="store_true",
+                   help="Disable attention-mask annealing (EoMT)")
     p.add_argument("--val_check_interval", type=float, default=1.0,
                    help="Fraction of training epoch between validations (1.0=every epoch)")
 
@@ -133,9 +142,13 @@ def main():
             num_blocks=args.num_blocks,
             lr=args.lr,
             backbone_lr=args.backbone_lr,
+            llrd_decay=args.llrd_decay,
             weight_decay=args.weight_decay,
             warmup_steps=args.warmup_steps,
+            vit_warmup_steps=args.vit_warmup_steps,
             max_steps=max_steps,
+            poly_power=args.poly_power,
+            attn_mask_annealing_enabled=not args.no_mask_annealing,
         )
         if args.eomt_ckpt:
             ckpt = torch.load(args.eomt_ckpt, map_location="cpu", weights_only=True)
@@ -164,6 +177,7 @@ def main():
             adapter_interval=args.adapter_interval,
             lr=args.lr,
             backbone_lr=args.backbone_lr,
+            llrd_decay=args.llrd_decay,
             weight_decay=args.weight_decay,
             warmup_steps=args.warmup_steps,
             max_steps=max_steps,

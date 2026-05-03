@@ -14,6 +14,7 @@ num_workers: 4
 max_epochs: 50
 lr: 1.0e-4
 backbone_lr: 1.0e-5
+llrd_decay: 0.8       # layer-wise LR decay per ViT block (paper=0.8; 1.0=disabled)
 weight_decay: 0.05
 warmup_steps: 500
 val_check_interval: 1.0

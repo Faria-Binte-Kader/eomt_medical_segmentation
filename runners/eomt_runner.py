@@ -16,7 +16,9 @@ from torch.optim import AdamW
 from models.eomt import EoMT
 from models.vit import ViT
 from training.mask_classification_loss import MaskClassificationLoss
+from training.two_stage_warmup_poly_schedule import TwoStageWarmupPolySchedule
 from runners.dice_metric import IGNORE_IDX
+from runners.optim_utils import build_backbone_llrd_groups
 
 NUM_CLASSES = 1   # cancer only
 
@@ -46,9 +48,13 @@ class EoMTMedicalModule(lightning.LightningModule):
         masked_attn_enabled: bool = True,
         lr: float = 1e-4,
         backbone_lr: float = 1e-5,
+        llrd_decay: float = 0.8,
         weight_decay: float = 0.05,
         warmup_steps: int = 500,
+        vit_warmup_steps: int = 500,
         max_steps: int = 10_000,
+        poly_power: float = 0.9,
+        attn_mask_annealing_enabled: bool = True,
         mask_coef: float = 5.0,
         dice_coef: float = 5.0,
         class_coef: float = 2.0,
@@ -77,6 +83,12 @@ class EoMTMedicalModule(lightning.LightningModule):
             no_object_coefficient=no_object_coef,
         )
 
+        # Staggered per-block annealing windows: divide max_steps into num_blocks+1
+        # equal segments; block i anneals during segment [i+1, i+2].
+        seg = max_steps // (num_blocks + 1)
+        self._anneal_start = [(i + 1) * seg for i in range(num_blocks)]
+        self._anneal_end   = [(i + 2) * seg for i in range(num_blocks)]
+
         self.img_size    = img_size
         self.num_classes = num_classes
         self._val_dice_store = None
@@ -98,6 +110,19 @@ class EoMTMedicalModule(lightning.LightningModule):
             "bqhw, bqc -> bchw",
             mask_logits.sigmoid(),
             class_logits.softmax(dim=-1)[..., :-1],   # drop no-object
+        )
+
+    def _mask_annealing(self, start: int, current: int, end: int) -> torch.Tensor:
+        """Polynomial decay from 1.0 → 0.0 between start and end steps."""
+        device = self.device
+        dtype  = self.network.attn_mask_probs[0].dtype
+        if current < start:
+            return torch.ones(1, device=device, dtype=dtype)
+        if current >= end:
+            return torch.zeros(1, device=device, dtype=dtype)
+        progress = (current - start) / (end - start)
+        return (1.0 - torch.tensor(progress, device=device, dtype=dtype)).pow(
+            self.hparams.poly_power
         )
 
     # ── forward / training ──────────────────────────────────────────────────
@@ -126,6 +151,15 @@ class EoMTMedicalModule(lightning.LightningModule):
         if not torch.isfinite(loss):
             print(f"[WARNING] Non-finite loss at step {self.global_step} — skipping batch")
         return torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
+
+    def on_train_batch_end(self, outputs, batch, batch_idx):
+        if not self.hparams.attn_mask_annealing_enabled:
+            return
+        for i in range(self.network.num_blocks):
+            self.network.attn_mask_probs[i] = self._mask_annealing(
+                self._anneal_start[i], self.global_step, self._anneal_end[i]
+            )
+            self.log(f"attn_mask_prob_{i}", self.network.attn_mask_probs[i], on_step=True)
 
     # ── validation ──────────────────────────────────────────────────────────
 
@@ -185,32 +219,27 @@ class EoMTMedicalModule(lightning.LightningModule):
     # ── optimiser ───────────────────────────────────────────────────────────
 
     def configure_optimizers(self):
-        backbone_params = list(self.network.encoder.parameters())
-        head_params = (
-            list(self.network.q.parameters())
-            + list(self.network.class_head.parameters())
-            + list(self.network.mask_head.parameters())
-            + list(self.network.upscale.parameters())
+        backbone_groups, bb_ids = build_backbone_llrd_groups(
+            self.network.encoder.backbone,
+            self.hparams.backbone_lr,
+            self.hparams.llrd_decay,
         )
-
+        head_params = [
+            p for p in self.parameters()
+            if p.requires_grad and id(p) not in bb_ids
+        ]
         optimizer = AdamW(
-            [
-                {"params": backbone_params, "lr": self.hparams.backbone_lr},
-                {"params": head_params,     "lr": self.hparams.lr},
-            ],
+            backbone_groups + [{"params": head_params, "lr": self.hparams.lr}],
             weight_decay=self.hparams.weight_decay,
         )
 
-        ws  = self.hparams.warmup_steps
-        tot = self.hparams.max_steps
-
-        def lr_lambda(step: int) -> float:
-            if step < ws:
-                return step / max(ws, 1)
-            progress = (step - ws) / max(tot - ws, 1)
-            return 0.5 * (1.0 + math.cos(math.pi * progress))
-
-        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+        scheduler = TwoStageWarmupPolySchedule(
+            optimizer,
+            num_backbone_params=len(backbone_groups),
+            warmup_steps=(self.hparams.warmup_steps, self.hparams.vit_warmup_steps),
+            total_steps=self.hparams.max_steps,
+            poly_power=self.hparams.poly_power,
+        )
         return {
             "optimizer":    optimizer,
             "lr_scheduler": {"scheduler": scheduler, "interval": "step"},

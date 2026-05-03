@@ -10,8 +10,11 @@ num_workers: 4
 max_epochs: 50
 lr: 1.0e-4
 backbone_lr: 1.0e-5
+llrd_decay: 0.8         # layer-wise LR decay per ViT block (paper=0.8; 1.0=disabled)
 weight_decay: 0.05
-warmup_steps: 500
+warmup_steps: 500       # head-only warmup steps (backbone frozen)
+vit_warmup_steps: 500   # backbone warmup steps after head warmup
+poly_power: 0.9         # polynomial decay power (paper=0.9)
 val_check_interval: 1.0
 devices: 1
 precision: "bf16-mixed"
