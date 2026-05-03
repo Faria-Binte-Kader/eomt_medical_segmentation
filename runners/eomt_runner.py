@@ -122,7 +122,10 @@ class EoMTMedicalModule(lightning.LightningModule):
             suffix = "" if i == n - 1 else f"_block_{i - n + 1}"
             all_losses.update({f"{k}{suffix}": v for k, v in losses.items()})
 
-        return self.criterion.loss_total(all_losses, self.log)
+        loss = self.criterion.loss_total(all_losses, self.log)
+        if not torch.isfinite(loss):
+            print(f"[WARNING] Non-finite loss at step {self.global_step} — skipping batch")
+        return torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
 
     # ── validation ──────────────────────────────────────────────────────────
 

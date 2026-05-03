@@ -19,7 +19,7 @@ weight_decay: 0.05
 warmup_steps: 500
 val_check_interval: 1.0
 devices: 1
-precision: "16-mixed"
+precision: "bf16-mixed"
 
 # ── Mask2Former architecture ────────────────────────────────────────────────
 m2f_model: "facebook/mask2former-swin-base-ade-semantic"

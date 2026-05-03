@@ -57,7 +57,7 @@ def parse_args():
 
     # Hardware
     p.add_argument("--devices",    type=int, default=1)
-    p.add_argument("--precision",  default="16-mixed",
+    p.add_argument("--precision",  default="bf16-mixed",
                    choices=["32", "16-mixed", "bf16-mixed"])
     p.add_argument("--compile",    action="store_true", help="torch.compile the model")
 

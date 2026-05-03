@@ -18,7 +18,7 @@ weight_decay: 0.05
 warmup_steps: 500
 val_check_interval: 1.0
 devices: 1
-precision: "16-mixed"
+precision: "bf16-mixed"
 
 # ── Architecture ────────────────────────────────────────────────────────────
 backbone_name: "vit_base_patch14_reg4_dinov2.lvd142m"

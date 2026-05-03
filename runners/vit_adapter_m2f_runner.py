@@ -94,7 +94,10 @@ class ViTAdapterM2FModule(L.LightningModule):
             for k, v in losses.items():
                 all_losses[k + suffix] = v
 
-        return self.criterion.loss_total(all_losses, self.log)
+        loss = self.criterion.loss_total(all_losses, self.log)
+        if not torch.isfinite(loss):
+            print(f"[WARNING] Non-finite loss at step {self.global_step} — skipping batch")
+        return torch.nan_to_num(loss, nan=0.0, posinf=0.0, neginf=0.0)
 
     # ── validation ───────────────────────────────────────────────────────────
 

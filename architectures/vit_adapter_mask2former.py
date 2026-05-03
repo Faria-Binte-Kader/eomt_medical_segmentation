@@ -384,6 +384,8 @@ class ViTAdapterMask2Former(nn.Module):
         vit_x = bb._pos_embed(vit_x)                # adds CLS + register tokens
 
         # flatten all SPM scales for cross-attention: [B, M, D]
+        # record spatial shapes so we can unpack spm_flat back after adapters
+        spm_shapes = {s: (spm_feats[s].shape[2], spm_feats[s].shape[3]) for s in (4, 8, 16, 32)}
         spm_flat = torch.cat(
             [spm_feats[s].flatten(2).permute(0, 2, 1) for s in (4, 8, 16, 32)],
             dim=1,
@@ -403,12 +405,21 @@ class ViTAdapterMask2Former(nn.Module):
         vit_x = bb.norm(vit_x)
         patch_tokens = vit_x[:, n_prefix:]           # [B, N_patches, D]
 
-        # 3. Merge ViT patch tokens into stride-16 SPM map
+        # 3a. Write ViT-enriched spm_flat back to spatial feature maps so FPN
+        #     sees adapter-updated features at all four scales (not just stride-16).
         B, N, D = patch_tokens.shape
+        offset = 0
+        for s in (4, 8, 16, 32):
+            h, w = spm_shapes[s]
+            n_tok = h * w
+            spm_feats[s] = spm_flat[:, offset:offset + n_tok].permute(0, 2, 1).view(B, D, h, w)
+            offset += n_tok
+
+        # 3b. Additionally merge final-layer ViT patch tokens into stride-16 map
         gh, gw  = bb.patch_embed.grid_size            # e.g. (36, 36) for 512px / patch14
         f_vit   = patch_tokens.permute(0, 2, 1).view(B, D, gh, gw)
 
-        h16, w16 = spm_feats[16].shape[2], spm_feats[16].shape[3]
+        h16, w16 = spm_shapes[16]
         spm_feats[16] = spm_feats[16] + F.interpolate(
             f_vit, size=(h16, w16), mode="bilinear", align_corners=False
         )
