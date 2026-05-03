@@ -123,7 +123,29 @@ python train.py \
     --output_dir ./checkpoints
 ```
 
-All models save the top-3 checkpoints by `val/dice_mean` plus `last.ckpt`.
+All models save the top-3 checkpoints by `val/dice_mean` plus `last.ckpt`. Training stops early if `val/dice_mean` does not improve for 10 consecutive epochs.
+
+### Multi-GPU Training
+
+Pass `--devices N` to use N GPUs with DDP. The per-GPU batch size stays fixed; effective batch size scales linearly.
+
+```bash
+# 2-GPU example — effective batch size = 2 × 2 = 4
+python train.py \
+    --model eomt \
+    --data_dir ./data/lung \
+    --backbone_name vit_base_patch14_reg4_dinov2.lvd142m \
+    --img_size 512 --batch_size 2 --devices 2 --max_epochs 50 \
+    --output_dir ./checkpoints
+```
+
+| `--devices` | Per-GPU batch | Effective batch | ~Epoch time (relative) |
+|---|---|---|---|
+| 1 | 2 | 2 | 1× (baseline) |
+| 2 | 2 | 4 | ~0.55× |
+| 4 | 2 | 8 | ~0.30× |
+
+> The LR schedule automatically adjusts `max_steps` to the per-GPU step count, so warmup and cosine decay remain correct regardless of the number of GPUs.
 
 ---
 

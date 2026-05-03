@@ -26,7 +26,7 @@ from pathlib import Path
 
 import torch
 import lightning as L
-from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
+from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping
 from lightning.pytorch.loggers import CSVLogger, WandbLogger
 from torch.utils.data import DataLoader
 
@@ -56,7 +56,8 @@ def parse_args():
                    help="Fraction of training epoch between validations (1.0=every epoch)")
 
     # Hardware
-    p.add_argument("--devices",    type=int, default=1)
+    p.add_argument("--devices",    type=int, default=1,
+                   help="Number of GPUs to use (1 = single-GPU, 2+ = DDP multi-GPU)")
     p.add_argument("--precision",  default="bf16-mixed",
                    choices=["32", "16-mixed", "bf16-mixed"])
     p.add_argument("--compile",    action="store_true", help="torch.compile the model")
@@ -188,14 +189,22 @@ def main():
         save_last=True,
     )
     lr_cb = LearningRateMonitor(logging_interval="step")
+    early_stop_cb = EarlyStopping(
+        monitor="val/dice_mean",
+        mode="max",
+        patience=10,
+        verbose=True,
+    )
 
     # ── Trainer ──────────────────────────────────────────────────────────
     trainer = L.Trainer(
         max_epochs=args.max_epochs,
+        accelerator="gpu",
         devices=args.devices,
+        strategy="ddp" if args.devices > 1 else "auto",
         precision=args.precision,
         logger=logger,
-        callbacks=[ckpt_cb, lr_cb],
+        callbacks=[ckpt_cb, lr_cb, early_stop_cb],
         gradient_clip_val=0.01,
         gradient_clip_algorithm="norm",
         val_check_interval=args.val_check_interval,

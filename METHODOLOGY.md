@@ -165,10 +165,25 @@ where `progress = (step − warmup_steps) / (max_steps − warmup_steps)`.
 |---|---|
 | Image size | 512 × 512 |
 | Batch size | 2 per GPU |
-| Max epochs | 50 |
-| Mixed precision | 16-bit (`bfloat16` or `float16`) |
+| Max epochs | 50 (early stopping with patience 10) |
+| Mixed precision | 16-bit (`bfloat16`) |
 | Checkpoint criterion | best `val/dice_mean` (= cancer DICE) |
 | Top-k checkpoints saved | 3 + last |
+| Early stopping | halts if `val/dice_mean` stagnates for 10 epochs |
+
+### 4.4 Multi-GPU Training
+
+Training supports data-parallel scaling via PyTorch DDP (controlled by `--devices N`). The per-GPU batch size is kept fixed at 2, so the **effective batch size scales linearly**: 2 GPUs → batch 4, 4 GPUs → batch 8.
+
+The LR scheduler's `max_steps` is computed as:
+
+```
+max_steps = (len(train_dataloader) × max_epochs) // num_gpus
+```
+
+This gives the per-process step count, which is what the per-GPU optimizer scheduler should track. Warmup and cosine decay therefore remain proportionally correct regardless of the number of GPUs.
+
+All validation metrics use `sync_dist=True`, which all-reduces TP/pred/tgt accumulators across GPUs before computing the final DICE and IoU, ensuring correct global metrics in multi-GPU runs.
 
 ---
 
