@@ -157,7 +157,7 @@ class ViTAdapterM2FModule(L.LightningModule):
     ) -> torch.Tensor:
         """Combines mask and class logits into [B, C, H, W] per-pixel scores."""
         ml = F.interpolate(mask_logits, img_size, mode="bilinear", align_corners=False)
-        cl_soft = class_logits[..., :-1].softmax(dim=-1)   # [B, Q, C]  (drop no-object)
+        cl_soft = class_logits.softmax(dim=-1)[..., :-1]    # [B, Q, C]  softmax then drop no-object
         ml_sig  = ml.sigmoid()                              # [B, Q, H, W]
         return torch.einsum("bqc,bqhw->bchw", cl_soft, ml_sig)
 
