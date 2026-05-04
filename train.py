@@ -38,6 +38,8 @@ def parse_args():
     p = argparse.ArgumentParser(description="Train EoMT or Mask2Former on MSD Lung")
 
     p.add_argument("--model", choices=["eomt", "mask2former", "vit_adapter_m2f"], required=True)
+    p.add_argument("--dataset", choices=["lung", "hepatic"], default="lung",
+                   help="Dataset to train on (lung=Task06, hepatic=Task08)")
     p.add_argument("--data_dir",   required=True, help="Path to processed data/ dir")
     p.add_argument("--output_dir", default="./checkpoints", help="Where to save checkpoints")
 
@@ -114,18 +116,28 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Datasets ────────────────────────────────────────────────────────
-    train_ds = MSDLungDataset(args.data_dir, split="train", img_size=img_size, augment=True)
-    val_ds   = MSDLungDataset(args.data_dir, split="val",   img_size=img_size, augment=False)
+    if args.dataset == "hepatic":
+        from data.msd_hepatic import MSDHepaticDataset, collate_fn as hepatic_collate
+        DatasetClass = MSDHepaticDataset
+        ds_collate   = hepatic_collate
+    else:
+        DatasetClass = MSDLungDataset
+        ds_collate   = collate_fn
+
+    train_ds = DatasetClass(args.data_dir, split="train", img_size=img_size, augment=True)
+    val_ds   = DatasetClass(args.data_dir, split="val",   img_size=img_size, augment=False)
+    num_classes = train_ds.num_classes
+    class_names = train_ds.class_names
 
     train_dl = DataLoader(
         train_ds, batch_size=args.batch_size,
         shuffle=True,  num_workers=args.num_workers,
-        pin_memory=True, collate_fn=collate_fn,
+        pin_memory=True, collate_fn=ds_collate,
     )
     val_dl = DataLoader(
         val_ds, batch_size=args.batch_size,
         shuffle=False, num_workers=args.num_workers,
-        pin_memory=True, collate_fn=collate_fn,
+        pin_memory=True, collate_fn=ds_collate,
     )
 
     # ── Estimate max_steps ───────────────────────────────────────────────
@@ -138,6 +150,7 @@ def main():
         module = EoMTMedicalModule(
             backbone_name=args.backbone_name,
             img_size=img_size,
+            num_classes=num_classes,
             num_q=args.num_q,
             num_blocks=args.num_blocks,
             lr=args.lr,
@@ -150,6 +163,7 @@ def main():
             poly_power=args.poly_power,
             attn_mask_annealing_enabled=not args.no_mask_annealing,
         )
+        module.class_names = class_names
         if args.eomt_ckpt:
             ckpt = torch.load(args.eomt_ckpt, map_location="cpu", weights_only=True)
             if "state_dict" in ckpt:
@@ -172,6 +186,7 @@ def main():
         module = ViTAdapterM2FModule(
             backbone_name=args.backbone_name,
             img_size=img_size,
+            num_classes=num_classes,
             num_queries=args.num_queries,
             num_decoder_layers=args.num_decoder_layers,
             adapter_interval=args.adapter_interval,
@@ -182,6 +197,7 @@ def main():
             warmup_steps=args.warmup_steps,
             max_steps=max_steps,
         )
+        module.class_names = class_names
 
     if args.compile:
         module = torch.compile(module)

@@ -1,0 +1,32 @@
+# ViT-Adapter + Mask2Former config for MSD HepaticVessel (Task08)
+#
+# Two foreground classes: vessel (0) and tumour (1).
+# CT windowing: soft-tissue window (centre=40, width=400 HU).
+
+# ── Data ───────────────────────────────────────────────────────────────────
+dataset: "hepatic"
+data_dir: "./data/hepatic"
+img_size: 512
+batch_size: 2
+num_workers: 4
+
+# ── Training ───────────────────────────────────────────────────────────────
+max_epochs: 50
+lr: 1.0e-4
+backbone_lr: 1.0e-5
+llrd_decay: 0.8       # layer-wise LR decay per ViT block (paper=0.8; 1.0=disabled)
+weight_decay: 0.05
+warmup_steps: 500
+val_check_interval: 1.0
+devices: 1
+precision: "bf16-mixed"
+
+# ── Architecture ────────────────────────────────────────────────────────────
+backbone_name: "vit_base_patch14_reg4_dinov2.lvd142m"
+num_queries: 100
+num_decoder_layers: 9
+adapter_interval: 6
+
+# ── Logging ────────────────────────────────────────────────────────────────
+output_dir: "./checkpoints"
+run_name: "vit_adapter_m2f_hepatic_b512"

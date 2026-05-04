@@ -16,21 +16,19 @@ from training.mask_classification_loss import MaskClassificationLoss
 from runners.dice_metric import IGNORE_IDX
 from runners.optim_utils import build_backbone_llrd_groups
 
-NUM_CLASSES = 1   # cancer only
-
-
 class ViTAdapterM2FModule(L.LightningModule):
     """
     ViT-Adapter + Mask2Former Lightning module.
 
     Training: multi-layer Hungarian-matched loss (BCE + Dice + CE).
-    Validation: threshold-based cancer prediction (score > 0.5), global DICE and IoU.
+    Validation: per-class threshold (score > 0.5), global DICE and IoU.
     """
 
     def __init__(
         self,
         backbone_name: str = "vit_base_patch14_reg4_dinov2.lvd142m",
         img_size: tuple = (512, 512),
+        num_classes: int = 1,
         num_queries: int = 100,
         num_decoder_layers: int = 9,
         adapter_interval: int = 6,
@@ -46,7 +44,7 @@ class ViTAdapterM2FModule(L.LightningModule):
 
         self.network = ViTAdapterMask2Former(
             backbone_name=backbone_name,
-            num_classes=NUM_CLASSES,
+            num_classes=num_classes,
             num_queries=num_queries,
             num_decoder_layers=num_decoder_layers,
             adapter_interval=adapter_interval,
@@ -60,18 +58,19 @@ class ViTAdapterM2FModule(L.LightningModule):
             mask_coefficient=5.0,
             dice_coefficient=5.0,
             class_coefficient=2.0,
-            num_labels=NUM_CLASSES,
+            num_labels=num_classes,
             no_object_coefficient=0.1,
         )
 
+        self.num_classes     = num_classes
         self._val_dice_store = None
         self._val_iou_store  = None
 
     # ── helpers ─────────────────────────────────────────────────────────────
 
     def _reset_stores(self):
-        self._val_dice_store = {"tp": 0.0, "pred": 0.0, "tgt": 0.0}
-        self._val_iou_store  = {"inter": 0.0, "union": 0.0}
+        self._val_dice_store = [{"tp": 0.0, "pred": 0.0, "tgt": 0.0} for _ in range(self.num_classes)]
+        self._val_iou_store  = [{"inter": 0.0, "union": 0.0}          for _ in range(self.num_classes)]
 
     # ── forward ──────────────────────────────────────────────────────────────
 
@@ -121,42 +120,52 @@ class ViTAdapterM2FModule(L.LightningModule):
 
         # Use final decoder layer output
         ml, cl = mask_logits_list[-1], class_logits_list[-1]
-        logits = self._to_per_pixel_logits(ml, cl, img_size)  # [B, 1, H, W]
+        logits = self._to_per_pixel_logits(ml, cl, img_size)  # [B, C, H, W]
 
-        pred_cancer = logits[:, 0, ...] > 0.5   # [B, H, W] bool
+        pred = logits > 0.5  # [B, C, H, W] bool
 
         for j, target in enumerate(targets):
-            seg = target["seg_map"].to(self.device)   # [H, W]: 0=cancer, 255=ignore
-            pc = pred_cancer[j].float()
-            sc = (seg == 0).float()
-
-            self._val_dice_store["tp"]   += (pc * sc).sum().item()
-            self._val_dice_store["pred"] += pc.sum().item()
-            self._val_dice_store["tgt"]  += sc.sum().item()
-
+            seg   = target["seg_map"].to(self.device)   # [H, W]
             valid = seg != IGNORE_IDX
-            pi = pred_cancer[j] & valid
-            ti = (seg == 0) & valid
-            self._val_iou_store["inter"] += (pi & ti).float().sum().item()
-            self._val_iou_store["union"] += (pi | ti).float().sum().item()
+            for c in range(self.num_classes):
+                pc = pred[j, c].float()
+                sc = (seg == c).float()
+                self._val_dice_store[c]["tp"]   += (pc * sc).sum().item()
+                self._val_dice_store[c]["pred"] += pc.sum().item()
+                self._val_dice_store[c]["tgt"]  += sc.sum().item()
+                pi = pred[j, c] & valid
+                ti = (seg == c) & valid
+                self._val_iou_store[c]["inter"] += (pi & ti).float().sum().item()
+                self._val_iou_store[c]["union"] += (pi | ti).float().sum().item()
 
     def on_validation_epoch_end(self):
-        smooth = 1e-6
+        smooth      = 1e-6
+        class_names = getattr(self, "class_names", [f"class{c}" for c in range(self.num_classes)])
+        dice_vals, iou_vals = [], []
 
-        tp   = self._val_dice_store["tp"]
-        pred = self._val_dice_store["pred"]
-        tgt  = self._val_dice_store["tgt"]
-        dice = (2.0 * tp + smooth) / (pred + tgt + smooth)
-        self.log("val/dice_cancer", dice, prog_bar=True,  sync_dist=True)
-        self.log("val/dice_mean",   dice, prog_bar=False, sync_dist=True)
+        for c in range(self.num_classes):
+            name = class_names[c] if c < len(class_names) else f"class{c}"
+            tp   = self._val_dice_store[c]["tp"]
+            pred = self._val_dice_store[c]["pred"]
+            tgt  = self._val_dice_store[c]["tgt"]
+            dice = (2.0 * tp + smooth) / (pred + tgt + smooth)
+            dice_vals.append(dice)
+            self.log(f"val/dice_{name}", dice, prog_bar=(self.num_classes == 1), sync_dist=True)
 
-        inter = self._val_iou_store["inter"]
-        union = self._val_iou_store["union"]
-        iou = (inter + smooth) / (union + smooth)
-        self.log("val/iou_cancer", iou, sync_dist=True)
-        self.log("val/miou",       iou, prog_bar=True, sync_dist=True)
+            inter = self._val_iou_store[c]["inter"]
+            union = self._val_iou_store[c]["union"]
+            iou   = (inter + smooth) / (union + smooth)
+            iou_vals.append(iou)
+            self.log(f"val/iou_{name}", iou, sync_dist=True)
 
-        print(f"\n[ViT-Adapter+M2F]  DICE cancer: {dice:.4f}  |  IoU cancer: {iou:.4f}")
+        dice_mean = sum(dice_vals) / len(dice_vals)
+        iou_mean  = sum(iou_vals)  / len(iou_vals)
+        self.log("val/dice_mean", dice_mean, prog_bar=True,  sync_dist=True)
+        self.log("val/miou",      iou_mean,  prog_bar=True,  sync_dist=True)
+
+        parts = "  |  ".join(f"DICE {class_names[c] if c < len(class_names) else c}: {dice_vals[c]:.4f}"
+                              for c in range(self.num_classes))
+        print(f"\n[ViT-Adapter+M2F]  {parts}  |  mean: {dice_mean:.4f}")
 
     # ── per-pixel logits helper ───────────────────────────────────────────────
 
