@@ -307,6 +307,18 @@ def main():
 
         module = load_fn(ckpt, device)
 
+        # Verify the checkpoint was trained for the same number of classes as the dataset.
+        # Mismatches happen when a lung checkpoint (num_classes=1) is passed to a hepatic
+        # evaluation (num_classes=2) or vice-versa.
+        ckpt_nc = getattr(getattr(module, "hparams", None), "num_classes", None)
+        if ckpt_nc is not None and ckpt_nc != len(class_names):
+            raise ValueError(
+                f"\n[{display_name}] num_classes mismatch!\n"
+                f"  Checkpoint : num_classes={ckpt_nc}  ({ckpt})\n"
+                f"  Dataset    : num_classes={len(class_names)}  classes={class_names}\n"
+                f"  → Make sure you pass the checkpoint trained on '--dataset {args.dataset}'."
+            )
+
         print("  Profiling …")
         prof = profile_model(module, model_name, img_size, device, n_runs=args.profile_runs)
         print(f"  params={prof['params_M']} M  |  MACs={prof['macs_G']} G  "
