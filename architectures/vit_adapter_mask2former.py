@@ -414,12 +414,12 @@ class ViTAdapterMask2Former(nn.Module):
         for s in (4, 8, 16, 32):
             h, w = spm_shapes[s]
             n_tok = h * w
-            spm_feats[s] = spm_flat[:, offset:offset + n_tok].permute(0, 2, 1).view(B, D, h, w)
+            spm_feats[s] = spm_flat[:, offset:offset + n_tok].permute(0, 2, 1).contiguous().view(B, D, h, w)
             offset += n_tok
 
         # 3b. Additionally merge final-layer ViT patch tokens into stride-16 map
         gh, gw  = bb.patch_embed.grid_size            # e.g. (36, 36) for 512px / patch14
-        f_vit   = patch_tokens.permute(0, 2, 1).view(B, D, gh, gw)
+        f_vit   = patch_tokens.permute(0, 2, 1).contiguous().view(B, D, gh, gw)
 
         h16, w16 = spm_shapes[16]
         spm_feats[16] = spm_feats[16] + F.interpolate(
